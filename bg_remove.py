@@ -1,35 +1,25 @@
 import streamlit as st
 from rembg import remove
 from PIL import Image
-import numpy as np
 from io import BytesIO
-import base64
 import os
 import traceback
 import time
 
+# --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Image Background Remover")
 
-st.write("## Remove background from your image")
-st.write(
-    ":dog: Try uploading an image to watch the background magically removed. Full quality images can be downloaded from the sidebar. This code is open source and available [here](https://github.com/tyler-simons/BackgroundRemoval) on GitHub. Special thanks to the [rembg library](https://github.com/danielgatis/rembg) :grin:"
-)
-st.sidebar.write("## Upload and download :gear:")
-
-# Increased file size limit
+# Constants
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
-# Max dimensions for processing
 MAX_IMAGE_SIZE = 2000  # pixels
 
-# Download the fixed image
+# --- HELPER FUNCTIONS ---
+
 def convert_image(img):
     buf = BytesIO()
     img.save(buf, format="PNG")
-    byte_im = buf.getvalue()
-    return byte_im
+    return buf.getvalue()
 
-# Resize image while maintaining aspect ratio
 def resize_image(image, max_size):
     width, height = image.size
     if width <= max_size and height <= max_size:
@@ -46,101 +36,86 @@ def resize_image(image, max_size):
 
 @st.cache_data
 def process_image(image_bytes):
-    """Process image with caching to avoid redundant processing"""
     try:
         image = Image.open(BytesIO(image_bytes))
-        # Resize large images to prevent memory issues
         resized = resize_image(image, MAX_IMAGE_SIZE)
-        # Process the image
         fixed = remove(resized)
         return image, fixed
     except Exception as e:
         st.error(f"Error processing image: {str(e)}")
         return None, None
 
-def fix_image(upload):
-    try:
-        start_time = time.time()
-        progress_bar = st.sidebar.progress(0)
-        status_text = st.sidebar.empty()
-        
-        status_text.text("Loading image...")
-        progress_bar.progress(10)
-        
-        # Read image bytes
-        if isinstance(upload, str):
-            # Default image path
-            if not os.path.exists(upload):
-                st.error(f"Default image not found at path: {upload}")
-                return
-            with open(upload, "rb") as f:
-                image_bytes = f.read()
-        else:
-            # Uploaded file
-            image_bytes = upload.getvalue()
-        
-        status_text.text("Processing image...")
-        progress_bar.progress(30)
-        
-        # Process image (using cache if available)
-        image, fixed = process_image(image_bytes)
-        if image is None or fixed is None:
-            return
-        
-        progress_bar.progress(80)
-        status_text.text("Displaying results...")
-        
-        # Display images
-        col1.write("Original Image :camera:")
-        col1.image(image)
-        
-        col2.write("Fixed Image :wrench:")
-        col2.image(fixed)
-        
-        # Prepare download button
-        st.sidebar.markdown("\n")
-        st.sidebar.download_button(
-            "Download fixed image", 
-            convert_image(fixed), 
-            "fixed.png", 
-            "image/png"
-        )
-        
-        progress_bar.progress(100)
-        processing_time = time.time() - start_time
-        status_text.text(f"Completed in {processing_time:.2f} seconds")
-        
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        st.sidebar.error("Failed to process image")
-        # Log the full error for debugging
-        print(f"Error in fix_image: {traceback.format_exc()}")
+# --- UI HEADER ---
+st.write("## 🪄 Remove background from your image")
+st.write(
+    ":dog: Drag and drop your image below to watch the magic happen. High-quality results will appear instantly."
+)
 
-# UI Layout
-col1, col2 = st.columns(2)
-my_upload = st.sidebar.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
-
-# Information about limitations
+# --- SIDEBAR ---
+st.sidebar.header("Settings & Download :gear:")
 with st.sidebar.expander("ℹ️ Image Guidelines"):
-    st.write("""
-    - Maximum file size: 10MB
-    - Large images will be automatically resized
-    - Supported formats: PNG, JPG, JPEG
-    - Processing time depends on image size
-    """)
+    st.write("- Max size: 10MB\n- Format: PNG, JPG, JPEG")
 
-# Process the image
-if my_upload is not None:
-    if my_upload.size > MAX_FILE_SIZE:
-        st.error(f"The uploaded file is too large. Please upload an image smaller than {MAX_FILE_SIZE/1024/1024:.1f}MB.")
+# --- MAIN UPLOAD AREA ---
+# Placing the uploader in the main body makes drag-and-drop much more accessible
+uploaded_file = st.file_uploader(
+    "Drag and drop an image here", 
+    type=["png", "jpg", "jpeg"],
+    help="Limit 10MB per file • PNG, JPG, JPEG"
+)
+
+# Layout for results
+col1, col2 = st.columns(2)
+
+def handle_processing(source):
+    """Encapsulated logic to process and display images"""
+    start_time = time.time()
+    
+    # Progress feedback
+    with st.status("Treating image...", expanded=True) as status:
+        st.write("Reading file...")
+        if isinstance(source, str): # Handle default path
+            with open(source, "rb") as f:
+                image_bytes = f.read()
+        else: # Handle UploadedFile object
+            image_bytes = source.getvalue()
+        
+        st.write("Analyzing and removing background...")
+        image, fixed = process_image(image_bytes)
+        
+        if image and fixed:
+            status.update(label="Healing complete!", state="complete", expanded=False)
+            
+            col1.subheader("Original :camera:")
+            col1.image(image, use_container_width=True)
+            
+            col2.subheader("Result :wrench:")
+            col2.image(fixed, use_container_width=True)
+            
+            # Download Button in Sidebar
+            st.sidebar.success("Processing Successful!")
+            st.sidebar.download_button(
+                label="Download Result",
+                data=convert_image(fixed),
+                file_name="background_removed.png",
+                mime="image/png",
+                use_container_width=True
+            )
+            
+            processing_time = time.time() - start_time
+            st.toast(f"Finished in {processing_time:.2f}s", icon='✅')
+
+# --- LOGIC CONTROL ---
+if uploaded_file is not None:
+    if uploaded_file.size > MAX_FILE_SIZE:
+        st.error(f"File too large! Please keep it under 10MB.")
     else:
-        fix_image(upload=my_upload)
+        handle_processing(uploaded_file)
 else:
-    # Try default images in order of preference
-    default_images = ["./zebra.jpg", "./wallaby.png"]
-    for img_path in default_images:
-        if os.path.exists(img_path):
-            fix_image(img_path)
-            break
+    # Default image logic
+    default_path = "./zebra.jpg"
+    if os.path.exists(default_path):
+        st.info("Showing example below. Upload your own to change it!")
+        handle_processing(default_path)
     else:
-        st.info("Please upload an image to get started!")
+        st.info("💡 Clinical Tip: Drag an image file directly onto the box above to begin.")
